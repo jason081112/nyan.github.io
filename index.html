@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0b0420" />
+  <title>Nyan Hero · 彩虹英雄</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- 主容器,canvas + UI 层叠加 -->
+  <div id="app" class="app" data-orientation="portrait" data-screen="menu">
+
+    <!-- 游戏画布 -->
+    <canvas id="game" class="game-canvas"></canvas>
+
+    <!-- ============ 主菜单界面 ============ -->
+    <section id="screen-menu" class="screen screen-menu" data-screen="menu">
+      <div class="menu-bg"></div>
+      <div class="menu-content">
+        <h1 class="title">
+          <span class="title-nyan">Nyan</span>
+          <span class="title-hero">Hero</span>
+        </h1>
+        <p class="subtitle">彩虹英雄 · 点击起飞</p>
+
+        <!-- 场景选择 -->
+        <div class="picker">
+          <div class="picker-label">🗺️ 选择场景</div>
+          <div id="scene-picker" class="picker-row"></div>
+        </div>
+
+        <!-- 角色选择 -->
+        <div class="picker">
+          <div class="picker-label">🐱 选择角色</div>
+          <div id="character-picker" class="picker-row"></div>
+        </div>
+
+        <!-- 最高分 -->
+        <div class="best-row">
+          <span class="best-label">历史最高</span>
+          <span id="best-score" class="best-value">0</span>
+        </div>
+
+        <!-- 屏幕方向 + 音效 -->
+        <div class="opts-row">
+          <button id="opt-orientation" class="opt-btn">📱 竖屏</button>
+          <button id="opt-sound" class="opt-btn">🔊 音效: 开</button>
+        </div>
+
+        <!-- 存档导入导出 -->
+        <div class="save-row">
+          <button id="save-export" class="save-btn">📤 导出存档</button>
+          <button id="save-import" class="save-btn">📥 导入存档</button>
+          <input id="save-import-input" type="file" accept="application/json" hidden />
+        </div>
+
+        <!-- 开始按钮 -->
+        <button id="btn-start" class="btn-primary">▶ 开始游戏</button>
+
+        <!-- 操作提示 -->
+        <p class="hint">点击 / 空格 / 触屏 上跳 · 撞管就死 · v0.3 简化版</p>
+
+        <!-- 版本号 -->
+        <div id="version-label" class="version-label">v0.4.0</div>
+      </div>
+    </section>
+
+    <!-- ============ 游戏内 HUD ============ -->
+    <section id="screen-hud" class="screen screen-hud" data-screen="hud" hidden>
+      <div class="hud-top">
+        <div class="hud-score">
+          <span class="hud-label">分数</span>
+          <span id="hud-score" class="hud-value">0</span>
+        </div>
+        <div class="hud-combo" id="hud-combo" hidden>
+          <span id="hud-combo-value">x1</span>
+        </div>
+        <div class="hud-best">
+          <span class="hud-label">最高</span>
+          <span id="hud-best" class="hud-value-sm">0</span>
+        </div>
+        <button id="btn-pause" class="hud-btn">⏸</button>
+      </div>
+    </section>
+
+    <!-- ============ 暂停界面 ============ -->
+    <section id="screen-pause" class="screen screen-overlay" data-screen="pause" hidden>
+      <div class="overlay-card">
+        <h2>⏸ 暂停</h2>
+        <div class="overlay-stats">
+          <div><span>当前分数</span><strong id="pause-score">0</strong></div>
+          <div><span>历史最高</span><strong id="pause-best">0</strong></div>
+        </div>
+        <div class="overlay-buttons">
+          <button id="btn-resume" class="btn-primary">▶ 继续</button>
+          <button id="btn-pause-orientation" class="btn-secondary">↔ 切换横竖屏</button>
+          <button id="btn-restart-from-pause" class="btn-secondary">🔄 重开</button>
+          <button id="btn-home-from-pause" class="btn-secondary">🏠 主界面</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 结算界面 ============ -->
+    <section id="screen-over" class="screen screen-overlay" data-screen="over" hidden>
+      <div class="overlay-card overlay-card-over">
+        <h2 id="over-title">游戏结束</h2>
+        <div id="over-badge" class="over-badge" hidden>🏆 新纪录!</div>
+        <div class="overlay-stats overlay-stats-large">
+          <div><span>本次分数</span><strong id="over-score">0</strong></div>
+          <div><span>历史最高</span><strong id="over-best">0</strong></div>
+          <div><span>最高连击</span><strong id="over-combo">1</strong></div>
+        </div>
+        <div class="overlay-buttons">
+          <button id="btn-restart" class="btn-primary">🔄 再来一局</button>
+          <button id="btn-over-orientation" class="btn-secondary">↔ 切换横竖屏</button>
+          <button id="btn-home" class="btn-secondary">🏠 主界面</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 加载遮罩(首次需用户手势激活音频) ============ -->
+    <section id="screen-audio-gate" class="screen screen-overlay" data-screen="audio-gate" hidden>
+      <div class="overlay-card">
+        <h2>🎵 启用音效?</h2>
+        <p class="overlay-desc">点击下方按钮启用 Web Audio(浏览器要求首次必须由用户手势激活)</p>
+        <div class="overlay-buttons">
+          <button id="btn-audio-on" class="btn-primary">🔊 启用音效</button>
+          <button id="btn-audio-off" class="btn-secondary">🔇 静音</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- JS 模块按依赖顺序加载 -->
+  <script src="js/audio.js"></script>
+  <script src="js/save.js"></script>
+  <script src="js/scenes.js"></script>
+  <script src="js/characters.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
