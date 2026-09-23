@@ -166,6 +166,14 @@
     state.scrollX = 0;
     state.shake = 0;
     state.flashAlpha = 0;
+    // 初始化管子生成模式
+    state.pipeMode = 'sine';
+    state.pipeModeTimer = 0;
+    state.pipeModeTime = 300; // 5秒切换模式 (60fps * 5)
+    state.pipeWaveOffset = 0;
+    state.pipeStepCounter = 0;
+    state.pipeSpiralAngle = 0;
+    state.pipeClusterCenter = canvas.h * 0.5;
     state.phase = 'countdown';
     state.countdown = COUNTDOWN_T;
     state.countdownLabel = '3';
@@ -224,7 +232,7 @@
   }
 
   /* ===================================================
-   * 管道生成 (v0.3.3: 下管不能戳进地面)
+   * 管道生成 - 多模式混合系统 v1.0
    * =================================================== */
   function spawnPipe(isFirst) {
     const gapSize = Math.max(180, canvas.h * PIPE_GAP_RATIO);
@@ -241,11 +249,8 @@
       const want = state.hero.y - gapSize / 2;
       gapTop = Math.max(minTop, Math.min(maxTop, want));
     } else {
-      // 后续: 在上一根 ±60px 平滑变化 (v0.4)
-      const last = state.pipes[state.pipes.length - 1];
-      const variance = (Math.random() - 0.5) * PIPE_VARIANCE;
-      const proposed = (last ? last.gapTop : state.hero.y - gapSize / 2) + variance;
-      gapTop = Math.max(minTop, Math.min(maxTop, proposed));
+      // 根据当前模式生成管子
+      gapTop = generateGapByMode(minTop, maxTop, gapSize);
     }
 
     state.pipes.push({
@@ -255,6 +260,98 @@
       pipeW: state.pipeW,
       passed: false
     });
+
+    // 更新模式计时器
+    state.pipeModeTimer++;
+    if (state.pipeModeTimer >= state.pipeModeTime) {
+      switchToNextMode();
+      state.pipeModeTimer = 0;
+    }
+  }
+
+  /* ===================================================
+   * 根据当前模式生成管子位置
+   * =================================================== */
+  function generateGapByMode(minTop, maxTop, gapSize) {
+    const last = state.pipes[state.pipes.length - 1];
+    const baseY = canvas.h * 0.45; // 基准高度
+    
+    switch (state.pipeMode) {
+      case 'sine':
+        // 正弦波模式 - 平滑周期性变化
+        state.pipeWaveOffset += 0.05;
+        const sineOffset = Math.sin(state.pipeWaveOffset) * 60;
+        gapTop = Math.max(minTop, Math.min(maxTop, (last ? last.gapTop : baseY) + sineOffset));
+        break;
+
+      case 'step':
+        // 阶梯模式 - 突然跳跃式变化
+        state.pipeStepCounter++;
+        if (state.pipeStepCounter >= 3) {
+          state.pipeStepCounter = 0;
+        }
+        const stepOffset = (state.pipeStepCounter - 1) * 40;
+        gapTop = Math.max(minTop, Math.min(maxTop, baseY + stepOffset));
+        break;
+
+      case 'random':
+        // 随机游走模式 - 大幅随机变化
+        const randomVariance = 80 + Math.random() * 40;
+        const randomOffset = (Math.random() - 0.5) * randomVariance;
+        gapTop = Math.max(minTop, Math.min(maxTop, (last ? last.gapTop : baseY) + randomOffset));
+        break;
+
+      case 'spiral':
+        // 螺旋模式 - 旋转式变化
+        state.pipeSpiralAngle += 0.1;
+        const spiralRadius = 50;
+        const spiralX = Math.cos(state.pipeSpiralAngle) * spiralRadius;
+        const spiralY = Math.sin(state.pipeSpiralAngle * 2) * spiralRadius;
+        gapTop = Math.max(minTop, Math.min(maxTop, baseY + spiralY));
+        break;
+
+      case 'cluster':
+        // 聚合模式 - 向中心点聚集
+        const clusterVariance = 30 + Math.random() * 20;
+        const clusterOffset = (Math.random() - 0.5) * clusterVariance;
+        // 缓慢移动中心点
+        state.pipeClusterCenter += (canvas.h * 0.5 - state.pipeClusterCenter) * 0.01;
+        gapTop = Math.max(minTop, Math.min(maxTop, state.pipeClusterCenter + clusterOffset));
+        break;
+
+      default:
+        // 默认使用平滑变化
+        const variance = (Math.random() - 0.5) * PIPE_VARIANCE;
+        gapTop = Math.max(minTop, Math.min(maxTop, (last ? last.gapTop : baseY) + variance));
+    }
+    
+    return gapTop;
+  }
+
+  /* ===================================================
+   * 切换到下一个模式
+   * =================================================== */
+  function switchToNextMode() {
+    const modes = ['sine', 'step', 'random', 'spiral', 'cluster'];
+    const currentIndex = modes.indexOf(state.pipeMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    state.pipeMode = modes[nextIndex];
+    
+    // 重置模式相关状态
+    switch (state.pipeMode) {
+      case 'sine':
+        state.pipeWaveOffset = 0;
+        break;
+      case 'step':
+        state.pipeStepCounter = 0;
+        break;
+      case 'spiral':
+        state.pipeSpiralAngle = 0;
+        break;
+      case 'cluster':
+        state.pipeClusterCenter = canvas.h * 0.5;
+        break;
+    }
   }
 
   /* ===================================================
@@ -521,7 +618,7 @@
   function renderDebug(ctx) {
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(8, 8, 200, 120);
+    ctx.fillRect(8, 8, 220, 140);
     ctx.fillStyle = '#5ce1ff';
     ctx.font = '12px monospace';
     ctx.textBaseline = 'top';
@@ -534,6 +631,8 @@
       `vy=${state.hero.vy.toFixed(0)}`,
       `pipes: ${state.pipes.length}`,
       `scrollX: ${state.scrollX.toFixed(0)}`,
+      `mode: ${state.pipeMode}`,
+      `mode timer: ${state.pipeModeTimer}/${state.pipeModeTime}`,
       '按 D 关闭调试'
     ];
     lines.forEach((ln, i) => ctx.fillText(ln, 16, 14 + i * 14));
