@@ -33,6 +33,7 @@
     refs.hudCombo     = $('#hud-combo');
     refs.hudComboV    = $('#hud-combo-value');
     refs.hudBest      = $('#hud-best');
+    refs.hudDifficulty = $('#hud-difficulty');
     refs.btnPause     = $('#btn-pause');
 
     refs.pauseScore   = $('#pause-score');
@@ -270,6 +271,8 @@
       refs.hudCombo.hidden = true;
       refs.hudBest.textContent = Math.max(NyanSave.data.best, NyanGame.state.score);
       refs.hudScore.textContent = NyanGame.state.score;
+      // 初始化难度显示
+      updateDifficulty();
       showHUD();
     });
     NyanGame.on('score', (e) => {
