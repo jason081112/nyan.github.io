@@ -199,11 +199,14 @@
     if (state.phase === 'over') return;
     state.phase = 'over';
     state.hero.alive = false;
+    // 死亡后重置难度
+    state.speedMult = 1;
     if (window.NyanAudio) {
       window.NyanAudio.stopBGM();
       window.NyanAudio.hit();
     }
     state.shake = 18;
+    // 死亡爆炸粒子效果
     for (let i = 0; i < 30; i++) {
       state.particles.push({
         x: state.hero.x,

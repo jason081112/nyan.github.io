@@ -114,6 +114,16 @@
     }
   }
 
+  function updateDifficulty() {
+    if (!refs.hudDifficulty) return;
+    const score = NyanGame.state.score;
+    let difficulty = '简单';
+    if (score >= 20) difficulty = '普通';
+    if (score >= 40) difficulty = '困难';
+    if (score >= 60) difficulty = '极难';
+    refs.hudDifficulty.textContent = difficulty;
+  }
+
   function updateVersion() {
     if (refs.versionLabel) {
       refs.versionLabel.textContent = 'v' + NyanGame.VERSION;
@@ -269,6 +279,8 @@
         refs.hudCombo.hidden = false;
         refs.hudComboV.textContent = 'x' + e.combo;
       }
+      // 更新难度显示
+      updateDifficulty();
     });
     NyanGame.on('pause', () => showPause());
     NyanGame.on('resume', () => {
