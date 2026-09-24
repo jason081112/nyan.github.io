@@ -116,7 +116,7 @@
     // 跳跃烟气粒子 - 优化：减少粒子数量
     if (state.particles.length < 40) {  // 限制跳跃粒子数量
       for (let i = 0; i < 4; i++) {  // 从6个减少到4个
-        state.particles.push({
+        pushParticle({
           x: state.hero.x - state.hero.r * 0.6,
           y: state.hero.y + (Math.random() - 0.5) * state.hero.r,
           vx: -60 - Math.random() * 60,
@@ -171,7 +171,7 @@
     // 初始化管子生成模式
     state.pipeMode = 'sine';
     state.pipeModeTimer = 0;
-    state.pipeModeTime = 300; // 5秒切换模式 (60fps * 5)
+    state.pipeModeTime = 12; // 每 12 根管子切换一次模式 (约 8~10 秒, 比之前明显更活跃)
     state.pipeWaveOffset = 0;
     state.pipeStepCounter = 0;
     state.pipeSpiralAngle = 0;
@@ -219,7 +219,7 @@
     // 死亡爆炸粒子效果 - 优化：减少粒子数量
     if (state.particles.length < 80) {  // 限制死亡粒子数量
       for (let i = 0; i < 20; i++) {  // 从30个减少到20个
-        state.particles.push({
+        pushParticle({
           x: state.hero.x,
           y: state.hero.y,
           vx: (Math.random() - 0.5) * 380,
@@ -443,9 +443,35 @@
     if (Math.random() < 0.6) charObj.spawnTrail(state.hero, state.hero.trail);
     global.NyanChars.updateTrail(state.hero.trail, dt);
 
-    /* -------- 管道移动 + 新管道 -------- */
+    /* -------- 管道移动 + 计分 + 新管道 -------- */
+    // 计分线与碰撞检测解耦: 只要管子完全越过计分线就一定加分, 不会漏分
+    const scoreLine = state.hero.x - state.hero.r * 0.3;
     for (const p of state.pipes) {
       p.x -= speed * dt;
+
+      // 计分
+      if (!p.passed && (p.x + p.pipeW) < scoreLine) {
+        p.passed = true;
+        state.score += 1;
+        state.combo += 1;
+        if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+        if (window.NyanAudio && window.NyanAudio.enabled) window.NyanAudio.score();
+        emit('score', { score: state.score, combo: state.combo });
+        // 飞星粒子 (数量少, 走统一粒子池有硬上限)
+        for (let i = 0; i < 4; i++) {
+          pushParticle({
+            x: state.hero.x + state.hero.r,
+            y: state.hero.y,
+            vx: 60 + Math.random() * 80,
+            vy: (Math.random() - 0.5) * 120,
+            r: 2 + Math.random() * 3,
+            life: 0.45,
+            decay: 1.8,
+            gravity: 100,
+            color: '#ffd24c'
+          });
+        }
+      }
     }
     state.pipes = state.pipes.filter(p => p.x + p.pipeW > -40);
     // 新增管道: 当屏幕右半部分没什么 pipe 时
@@ -485,32 +511,6 @@
         const dyDn = hy - cyDn;
         if (dxDn * dxDn + dyDn * dyDn < heroR2) { end(); return; }
       }
-
-      // 计分 - 优化：避免重复检查和粒子爆炸
-      if (!p.passed && phRight < state.hero.x - state.hero.r * 0.3) {
-        p.passed = true;
-        state.score += 1;
-        state.combo += 1;
-        if (state.combo > state.maxCombo) state.maxCombo = state.combo;
-        if (window.NyanAudio && window.NyanAudio.enabled) window.NyanAudio.score();
-        emit('score', { score: state.score, combo: state.combo });
-        // 飞星粒子 - 优化性能：减少粒子数量和生命周期
-        if (state.particles.length < 50) {  // 限制最大粒子数量
-          for (let i = 0; i < 4; i++) {  // 从8个减少到4个
-            state.particles.push({
-              x: state.hero.x + state.hero.r,
-              y: state.hero.y,
-              vx: 60 + Math.random() * 80,
-              vy: (Math.random() - 0.5) * 120,
-              r: 2 + Math.random() * 3,
-              life: 0.5,  // 从0.7减少到0.5，让粒子消失更快
-              decay: 1.5,  // 从1.2增加到1.5，让粒子衰减更快
-              gravity: 100,
-              color: '#ffd24c'
-            });
-          }
-        }
-      }
     }
 
     updateParticles(dt);
@@ -518,24 +518,29 @@
     if (state.shake > 0) state.shake = Math.max(0, state.shake - 60 * dt);
   }
 
+  /* ===================================================
+   * 粒子池: 硬上限, 超了就丢弃最老的, 防止内存/GC 抖动
+   * =================================================== */
+  const MAX_PARTICLES = 120;
+  function pushParticle(p) {
+    if (state.particles.length >= MAX_PARTICLES) {
+      state.particles.shift();   // 丢弃最老的, 保持数组稳定大小
+    }
+    state.particles.push(p);
+  }
+
   function updateParticles(dt) {
-    // 优化：从后向前遍历，避免数组索引问题
-    for (let i = state.particles.length - 1; i >= 0; i--) {
+    // 用"存活指针"原地压缩, 避免大量 splice 造成的数组搬移
+    let w = 0;
+    for (let i = 0; i < state.particles.length; i++) {
       const p = state.particles[i];
       p.x += (p.vx || 0) * dt;
       p.y += (p.vy || 0) * dt;
       if (p.gravity) p.vy += p.gravity * dt;
       p.life -= (p.decay || 1) * dt;
-      // 优化：提前移除死亡粒子，减少数组大小
-      if (p.life <= 0) {
-        state.particles.splice(i, 1);
-      }
+      if (p.life > 0) state.particles[w++] = p;
     }
-    
-    // 优化：限制最大粒子数量，防止内存泄漏
-    if (state.particles.length > 100) {
-      state.particles.splice(0, state.particles.length - 100);
-    }
+    state.particles.length = w;    // 一次性截断, 比分次 splice 快得多
   }
 
   /* ===================================================
