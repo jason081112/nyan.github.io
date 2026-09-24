@@ -253,9 +253,21 @@
       const want = state.hero.y - gapSize / 2;
       gapTop = Math.max(minTop, Math.min(maxTop, want));
     } else {
-      // 根据当前模式生成管子
-      gapTop = generateGapByMode(minTop, maxTop, gapSize);
+      // 根据当前模式生成管子 —— 包一层防御, 任何异常都不能打断主循环
+      try {
+        gapTop = generateGapByMode(minTop, maxTop, gapSize);
+      } catch (err) {
+        console.warn('[Nyan] generateGapByMode 失败, 回落安全值:', err);
+        gapTop = (state.pipes.length ? state.pipes[state.pipes.length - 1].gapTop : canvas.h * 0.45);
+      }
     }
+
+    // 防御: 校验 gapTop 是合法有限数且落在可用区间, 否则强制回落到安全值
+    if (typeof gapTop !== 'number' || !isFinite(gapTop)) {
+      console.warn('[Nyan] gapTop 非法:', gapTop, '→ 回落安全值');
+      gapTop = Math.max(minTop, Math.min(maxTop, canvas.h * 0.45));
+    }
+    gapTop = Math.max(minTop, Math.min(maxTop, gapTop));
 
     state.pipes.push({
       x: canvas.w + 20,
@@ -279,7 +291,8 @@
   function generateGapByMode(minTop, maxTop, gapSize) {
     const last = state.pipes[state.pipes.length - 1];
     const baseY = canvas.h * 0.45; // 基准高度
-    
+    let gapTop = baseY;            // ← 修复: 严格模式下未声明赋值会抛 ReferenceError
+
     switch (state.pipeMode) {
       case 'sine':
         // 正弦波模式 - 平滑周期性变化
@@ -309,7 +322,6 @@
         // 螺旋模式 - 旋转式变化
         state.pipeSpiralAngle += 0.1;
         const spiralRadius = 50;
-        const spiralX = Math.cos(state.pipeSpiralAngle) * spiralRadius;
         const spiralY = Math.sin(state.pipeSpiralAngle * 2) * spiralRadius;
         gapTop = Math.max(minTop, Math.min(maxTop, baseY + spiralY));
         break;
@@ -354,6 +366,15 @@
         break;
       case 'cluster':
         state.pipeClusterCenter = canvas.h * 0.5;
+        break;
+      case 'random':
+        // 随机模式无内部状态, 显式留空
+        break;
+      default:
+        // 防御: 模式名异常时回落到 sine, 不让游戏卡死在未知模式
+        console.warn('[Nyan] 未知 pipeMode:', state.pipeMode, '→ 回落 sine');
+        state.pipeMode = 'sine';
+        state.pipeWaveOffset = 0;
         break;
     }
   }
