@@ -113,19 +113,21 @@
     if (!state.hero.alive) return;
     state.hero.vy = JUMP_VY;
     if (window.NyanAudio && window.NyanAudio.enabled) window.NyanAudio.jump();
-    // 跳跃烟气粒子
-    for (let i = 0; i < 6; i++) {
-      state.particles.push({
-        x: state.hero.x - state.hero.r * 0.6,
-        y: state.hero.y + (Math.random() - 0.5) * state.hero.r,
-        vx: -60 - Math.random() * 60,
-        vy: -40 - Math.random() * 60,
-        r: 2 + Math.random() * 3,
-        life: 0.7,
-        decay: 0.08,
-        gravity: 200,
-        color: '#fff'
-      });
+    // 跳跃烟气粒子 - 优化：减少粒子数量
+    if (state.particles.length < 40) {  // 限制跳跃粒子数量
+      for (let i = 0; i < 4; i++) {  // 从6个减少到4个
+        state.particles.push({
+          x: state.hero.x - state.hero.r * 0.6,
+          y: state.hero.y + (Math.random() - 0.5) * state.hero.r,
+          vx: -60 - Math.random() * 60,
+          vy: -40 - Math.random() * 60,
+          r: 2 + Math.random() * 3,
+          life: 0.5,  // 从0.7减少到0.5
+          decay: 0.1,  // 从0.08增加到0.1，让粒子消失更快
+          gravity: 200,
+          color: '#fff'
+        });
+      }
     }
   }
 
@@ -214,19 +216,21 @@
       window.NyanAudio.hit();
     }
     state.shake = 18;
-    // 死亡爆炸粒子效果
-    for (let i = 0; i < 30; i++) {
-      state.particles.push({
-        x: state.hero.x,
-        y: state.hero.y,
-        vx: (Math.random() - 0.5) * 380,
-        vy: (Math.random() - 1) * 280,
-        r: 2 + Math.random() * 5,
-        life: 1,
-        decay: 0.8,
-        gravity: 600,
-        color: ['#ff5f9e', '#ffd24c', '#5ce1ff', '#fff'][Math.floor(Math.random() * 4)]
-      });
+    // 死亡爆炸粒子效果 - 优化：减少粒子数量
+    if (state.particles.length < 80) {  // 限制死亡粒子数量
+      for (let i = 0; i < 20; i++) {  // 从30个减少到20个
+        state.particles.push({
+          x: state.hero.x,
+          y: state.hero.y,
+          vx: (Math.random() - 0.5) * 380,
+          vy: (Math.random() - 1) * 280,
+          r: 2 + Math.random() * 5,
+          life: 0.8,  // 从1减少到0.8
+          decay: 1.0,  // 从0.8增加到1.0，让粒子消失更快
+          gravity: 600,
+          color: ['#ff5f9e', '#ffd24c', '#5ce1ff', '#fff'][Math.floor(Math.random() * 4)]
+        });
+      }
     }
     emit('over');
   }
@@ -482,7 +486,7 @@
         if (dxDn * dxDn + dyDn * dyDn < heroR2) { end(); return; }
       }
 
-      // 计分
+      // 计分 - 优化：避免重复检查和粒子爆炸
       if (!p.passed && phRight < state.hero.x - state.hero.r * 0.3) {
         p.passed = true;
         state.score += 1;
@@ -490,19 +494,21 @@
         if (state.combo > state.maxCombo) state.maxCombo = state.combo;
         if (window.NyanAudio && window.NyanAudio.enabled) window.NyanAudio.score();
         emit('score', { score: state.score, combo: state.combo });
-        // 飞星粒子
-        for (let i = 0; i < 8; i++) {
-          state.particles.push({
-            x: state.hero.x + state.hero.r,
-            y: state.hero.y,
-            vx: 60 + Math.random() * 80,
-            vy: (Math.random() - 0.5) * 120,
-            r: 2 + Math.random() * 3,
-            life: 0.7,
-            decay: 1.2,
-            gravity: 100,
-            color: '#ffd24c'
-          });
+        // 飞星粒子 - 优化性能：减少粒子数量和生命周期
+        if (state.particles.length < 50) {  // 限制最大粒子数量
+          for (let i = 0; i < 4; i++) {  // 从8个减少到4个
+            state.particles.push({
+              x: state.hero.x + state.hero.r,
+              y: state.hero.y,
+              vx: 60 + Math.random() * 80,
+              vy: (Math.random() - 0.5) * 120,
+              r: 2 + Math.random() * 3,
+              life: 0.5,  // 从0.7减少到0.5，让粒子消失更快
+              decay: 1.5,  // 从1.2增加到1.5，让粒子衰减更快
+              gravity: 100,
+              color: '#ffd24c'
+            });
+          }
         }
       }
     }
@@ -513,13 +519,22 @@
   }
 
   function updateParticles(dt) {
+    // 优化：从后向前遍历，避免数组索引问题
     for (let i = state.particles.length - 1; i >= 0; i--) {
       const p = state.particles[i];
       p.x += (p.vx || 0) * dt;
       p.y += (p.vy || 0) * dt;
       if (p.gravity) p.vy += p.gravity * dt;
       p.life -= (p.decay || 1) * dt;
-      if (p.life <= 0) state.particles.splice(i, 1);
+      // 优化：提前移除死亡粒子，减少数组大小
+      if (p.life <= 0) {
+        state.particles.splice(i, 1);
+      }
+    }
+    
+    // 优化：限制最大粒子数量，防止内存泄漏
+    if (state.particles.length > 100) {
+      state.particles.splice(0, state.particles.length - 100);
     }
   }
 
