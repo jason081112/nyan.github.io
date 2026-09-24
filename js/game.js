@@ -573,15 +573,17 @@
     /* 4. Hero 本体 */
     charObj.draw(ctx, state.hero.x, state.hero.y, state.hero.r, performance.now(), state.hero.vy);
 
-    /* 5. 一次性粒子 */
-    for (const p of state.particles) {
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, p.life);
-      ctx.fillStyle = p.color || '#fff';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+    /* 5. 一次性粒子 (去掉 save/restore, 直接设 globalAlpha) */
+    if (state.particles.length) {
+      ctx.globalAlpha = 1;
+      for (const p of state.particles) {
+        ctx.globalAlpha = p.life > 1 ? 1 : (p.life < 0 ? 0 : p.life);
+        ctx.fillStyle = p.color || '#fff';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
     }
 
     /* 6. 地面 */

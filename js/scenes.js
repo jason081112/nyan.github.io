@@ -44,6 +44,28 @@
    * 1. 太空 · 深紫渐变 + 星星 + 月亮 + 彩虹云
    * ========================================================= */
   function spaceSeed(n, i) { return (((i+1) * (n+9) * 9301 + 49297) % 233280) / 233280; }
+
+  /* 星空预渲染层: 把 80 颗星一次性画进离屏 canvas, 之后每帧只 drawImage */
+  let starLayer = null;
+  let starLayerW = 0, starLayerH = 0;
+  function getStarLayer(w, h) {
+    if (starLayer && starLayerW === w && starLayerH === h) return starLayer;
+    const c = document.createElement('canvas');
+    // 宽度留出余量, 便于无缝横移
+    const LW = Math.ceil(w + 200), LH = Math.ceil(h);
+    c.width = LW; c.height = LH;
+    const g = c.getContext('2d');
+    for (let i = 0; i < 80; i++) {
+      const x = spaceSeed(1, i) * (LW - 100);
+      const y = spaceSeed(2, i) * LH;
+      const r = 0.6 + spaceSeed(3, i) * 1.6;
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+    starLayer = c; starLayerW = w; starLayerH = h;
+    return c;
+  }
+
   function spaceDrawBackground(ctx, w, h, t, sx) {
     const g = ctx.createLinearGradient(0, 0, 0, h);
     g.addColorStop(0, '#0b0420');
@@ -61,16 +83,12 @@
     ctx.beginPath(); ctx.arc(moonX - moonR*0.4, moonY - moonR*0.3, moonR*0.18, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(moonX + moonR*0.3, moonY + moonR*0.2, moonR*0.12, 0, Math.PI*2); ctx.fill();
 
-    // 星星
-    const starOff = sx * 0.1;
-    for (let i = 0; i < 80; i++) {
-      const x = ((spaceSeed(1, i) * 2000 - starOff) % (w + 200) + w + 200) % (w + 200) - 100;
-      const y = (spaceSeed(2, i) * 1600) % h;
-      const r = 0.6 + spaceSeed(3, i) * 1.6;
-      const tw = 0.5 + 0.5 * Math.sin(t * 2 + spaceSeed(4, i) * 6);
-      ctx.fillStyle = `rgba(255,255,255,${tw})`;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    }
+    // 星星: 用预渲染层无缝横移 (替代每帧 80 次 arc+fill)
+    const layer = getStarLayer(w, h);
+    const LW = layer.width;
+    const offset = (sx * 0.1) % LW;
+    ctx.drawImage(layer, -offset, 0);
+    ctx.drawImage(layer, LW - offset, 0);
 
     // 远景彩虹云
     const cloudOff = sx * 0.2;

@@ -115,6 +115,9 @@
     }
   }
 
+  /* 只在值真正变化时才写 DOM, 避免每分都触发重排 */
+  const hudCache = { score: -1, best: -1, combo: -1, diff: '' };
+
   function updateDifficulty() {
     if (!refs.hudDifficulty) return;
     const score = NyanGame.state.score;
@@ -122,7 +125,10 @@
     if (score >= 20) difficulty = '普通';
     if (score >= 40) difficulty = '困难';
     if (score >= 60) difficulty = '极难';
-    refs.hudDifficulty.textContent = difficulty;
+    if (difficulty !== hudCache.diff) {
+      hudCache.diff = difficulty;
+      refs.hudDifficulty.textContent = difficulty;
+    }
   }
 
   function updateVersion() {
@@ -144,6 +150,13 @@
     updateVersion();
     buildScenePicker(NyanSave.data.selectedScene);
     buildCharPicker(NyanSave.data.selectedCharacter);
+  }
+
+  function resetHudCache() {
+    hudCache.score = -1;
+    hudCache.best = -1;
+    hudCache.combo = -1;
+    hudCache.diff = '';
   }
 
   function showHUD() {
@@ -268,21 +281,33 @@
 
     // 监听游戏事件
     NyanGame.on('start', () => {
+      resetHudCache();   // 重置缓存, 否则新一局相同分数不刷新
       refs.hudCombo.hidden = true;
       refs.hudBest.textContent = Math.max(NyanSave.data.best, NyanGame.state.score);
       refs.hudScore.textContent = NyanGame.state.score;
+      hudCache.score = NyanGame.state.score;
+      hudCache.best = Math.max(NyanSave.data.best, NyanGame.state.score);
       // 初始化难度显示
       updateDifficulty();
       showHUD();
     });
     NyanGame.on('score', (e) => {
-      refs.hudScore.textContent = e.score;
-      refs.hudBest.textContent = Math.max(NyanSave.data.best, e.score);
-      if (e.combo >= 2) {
-        refs.hudCombo.hidden = false;
-        refs.hudComboV.textContent = 'x' + e.combo;
+      if (e.score !== hudCache.score) {
+        hudCache.score = e.score;
+        refs.hudScore.textContent = e.score;
       }
-      // 更新难度显示
+      const best = Math.max(NyanSave.data.best, e.score);
+      if (best !== hudCache.best) {
+        hudCache.best = best;
+        refs.hudBest.textContent = best;
+      }
+      if (e.combo >= 2) {
+        if (refs.hudCombo.hidden) refs.hudCombo.hidden = false;
+        if (e.combo !== hudCache.combo) {
+          hudCache.combo = e.combo;
+          refs.hudComboV.textContent = 'x' + e.combo;
+        }
+      }
       updateDifficulty();
     });
     NyanGame.on('pause', () => showPause());
