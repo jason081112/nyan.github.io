@@ -33,6 +33,18 @@
   const PIPE_DRIFT_PERIOD = 5.5;// 漂移周期 (秒), 越慢越稳
   const LOWER_PIPE_MIN_VISIBLE = 90;
 
+  /* ---------- 难度曲线 (按分数 0→1, 40 分封顶) ---------- */
+  const DIFF_STEPS      = 40;    // 满难度分数
+  const SPEED_MAX       = 1.75;  // 速度倍率上限
+  const GAP_START_RATIO = 0.32;  // 起始缝宽比例
+  const GAP_MIN_RATIO   = 0.22;  // 满难度缝宽比例
+  const SPACING_START   = 340;   // 起始间距
+  const SPACING_MIN     = 250;   // 满难度间距
+  function difficulty() {
+    return Math.min(state.score / DIFF_STEPS, 1);
+  }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
   /* ---------- 事件总线 ---------- */
   const listeners = {};
   function on(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); }
@@ -168,10 +180,8 @@
     state.scrollX = 0;
     state.shake = 0;
     state.flashAlpha = 0;
-    // 初始化管子生成模式
+    // 初始化管子生成模式 (难度驱动)
     state.pipeMode = 'sine';
-    state.pipeModeTimer = 0;
-    state.pipeModeTime = 12; // 每 12 根管子切换一次模式 (约 8~10 秒, 比之前明显更活跃)
     state.pipeWaveOffset = 0;
     state.pipeStepCounter = 0;
     state.pipeSpiralAngle = 0;
@@ -239,7 +249,10 @@
    * 管道生成 - 多模式混合系统 v1.0
    * =================================================== */
   function spawnPipe(isFirst) {
-    const gapSize = Math.max(180, canvas.h * PIPE_GAP_RATIO);
+    // 难度越高: 缝越窄 (start→min 线性插值)
+    const d = difficulty();
+    const gapRatio = lerp(GAP_START_RATIO, GAP_MIN_RATIO, d);
+    const gapSize = Math.max(150, canvas.h * gapRatio);
     const groundTop = canvas.h - state.groundH;
     const maxBotY = groundTop - LOWER_PIPE_MIN_VISIBLE;     // 下管底端最多到这里
     const minTop = MIN_TOP;                                  // 80
@@ -277,12 +290,8 @@
       passed: false
     });
 
-    // 更新模式计时器
-    state.pipeModeTimer++;
-    if (state.pipeModeTimer >= state.pipeModeTime) {
-      switchToNextMode();
-      state.pipeModeTimer = 0;
-    }
+    // 模式由难度驱动: 每根管子都按当前难度重新抽取 (区间内随机)
+    state.pipeMode = pickModeByDifficulty();
   }
 
   /* ===================================================
@@ -347,36 +356,19 @@
   /* ===================================================
    * 切换到下一个模式
    * =================================================== */
-  function switchToNextMode() {
-    const modes = ['sine', 'step', 'random', 'spiral', 'cluster'];
-    const currentIndex = modes.indexOf(state.pipeMode);
-    const nextIndex = (currentIndex + 1) % modes.length;
-    state.pipeMode = modes[nextIndex];
-    
-    // 重置模式相关状态
-    switch (state.pipeMode) {
-      case 'sine':
-        state.pipeWaveOffset = 0;
-        break;
-      case 'step':
-        state.pipeStepCounter = 0;
-        break;
-      case 'spiral':
-        state.pipeSpiralAngle = 0;
-        break;
-      case 'cluster':
-        state.pipeClusterCenter = canvas.h * 0.5;
-        break;
-      case 'random':
-        // 随机模式无内部状态, 显式留空
-        break;
-      default:
-        // 防御: 模式名异常时回落到 sine, 不让游戏卡死在未知模式
-        console.warn('[Nyan] 未知 pipeMode:', state.pipeMode, '→ 回落 sine');
-        state.pipeMode = 'sine';
-        state.pipeWaveOffset = 0;
-        break;
-    }
+  function pickModeByDifficulty() {
+    const d = difficulty();
+    let pool;
+    if (d < 0.25)      pool = ['sine', 'sine', 'cluster'];
+    else if (d < 0.5)  pool = ['sine', 'step', 'cluster'];
+    else if (d < 0.75) pool = ['step', 'random', 'sine'];
+    else               pool = ['random', 'spiral', 'step', 'random'];
+    const mode = pool[Math.floor(Math.random() * pool.length)];
+    // 重置对应模式状态
+    if (mode === 'sine') state.pipeWaveOffset = 0;
+    else if (mode === 'spiral') state.pipeSpiralAngle = 0;
+    else if (mode === 'cluster') state.pipeClusterCenter = canvas.h * 0.5;
+    return mode;
   }
 
   /* ===================================================
@@ -455,6 +447,8 @@
     }
 
     /* -------- 滚动 + 尾迹 -------- */
+    // 难度驱动: 速度随分数提升 (1.0 → 1.75)
+    state.speedMult = lerp(1, SPEED_MAX, difficulty());
     const speed = PIPE_SPEED * state.speedMult;
     state.scrollX += speed * dt;
     // v0.4.1 管子整体上下漂移 (±30px, 5.5s 一周期, 很慢很稳)
@@ -495,10 +489,11 @@
       }
     }
     state.pipes = state.pipes.filter(p => p.x + p.pipeW > -40);
-    // 新增管道: 当屏幕右半部分没什么 pipe 时
+    // 新增管道: 间距随难度收窄
+    const spacing = lerp(SPACING_START, SPACING_MIN, difficulty());
     let needNew = true;
     for (const p of state.pipes) {
-      if (p.x > canvas.w - PIPE_SPACING) { needNew = false; break; }
+      if (p.x > canvas.w - spacing) { needNew = false; break; }
     }
     if (needNew) spawnPipe();
 
@@ -675,7 +670,7 @@
       `pipes: ${state.pipes.length}`,
       `scrollX: ${state.scrollX.toFixed(0)}`,
       `mode: ${state.pipeMode}`,
-      `mode timer: ${state.pipeModeTimer}/${state.pipeModeTime}`,
+      `diff: ${difficulty().toFixed(2)}  speed: x${state.speedMult.toFixed(2)}`,
       '按 D 关闭调试'
     ];
     lines.forEach((ln, i) => ctx.fillText(ln, 16, 14 + i * 14));
