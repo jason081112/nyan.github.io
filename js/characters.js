@@ -27,6 +27,39 @@
   /* =========================================================
    * 1. Nyan Cat  · 粉黄猫脸 + 彩虹尾
    * ========================================================= */
+  /* =========================================================
+   * 拖尾粒子统一上限 + 预渲染精灵缓存
+   * createRadialGradient 每帧创建几十个 → 主线程爆炸。
+   * 改为: 离屏 canvas 预渲染一次, 之后只 drawImage。
+   * ========================================================= */
+  const MAX_TRAIL = 24;
+
+  function pushTrail(arr, p) {
+    if (arr.length >= MAX_TRAIL) arr.shift();
+    arr.push(p);
+  }
+
+  /* 预渲染一个圆形光点精灵 (只做一次) */
+  function makeGlowSprite(size, color, soft) {
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d');
+    const r = size / 2;
+    const grad = g.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, color);
+    grad.addColorStop(soft ? 0.6 : 0.75, color);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); g.fill();
+    return c;
+  }
+
+  const glowCache = {};
+  function getGlow(color) {
+    if (!glowCache[color]) glowCache[color] = makeGlowSprite(48, color, true);
+    return glowCache[color];
+  }
+
   function nyanDraw(ctx, x, y, r, t, vy) {
     ctx.save();
     ctx.translate(x, y);
@@ -120,31 +153,26 @@
 
   function nyanTrailSpawn(state, particles) {
     const colors = ['#ff5f9e', '#ff8a5b', '#ffd24c', '#5ce1ff', '#b388ff'];
-    particles.push({
+    pushTrail(particles, {
       x: state.x - state.r * 0.5,
       y: state.y + (Math.random() - 0.5) * state.r * 0.4,
       vx: -60 - Math.random() * 50,
       vy: (Math.random() - 0.5) * 30,
       r: state.r * (0.45 + Math.random() * 0.5),
-      life: 0.6, decay: 1.6,
+      life: 0.45, decay: 2.2,
       color: colors[Math.floor(Math.random() * colors.length)],
       type: 'rainbow'
     });
   }
   function nyanTrailDraw(ctx, particles) {
+    // 用预渲染精灵代替每帧 createRadialGradient
     for (const p of particles) {
-      ctx.save();
-      ctx.globalAlpha = Math.min(1, Math.max(0, p.life * 1.7));
-      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
-      grad.addColorStop(0, p.color);
-      grad.addColorStop(0.6, p.color);
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.beginPath(); ctx.arc(p.x - p.r * 0.3, p.y - p.r * 0.3, p.r * 0.22, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+      const a = Math.min(1, Math.max(0, p.life * 1.9));
+      const d = p.r * 2.4;
+      ctx.globalAlpha = a;
+      ctx.drawImage(getGlow(p.color), p.x - d / 2, p.y - d / 2, d, d);
     }
+    ctx.globalAlpha = 1;
   }
 
   /* =========================================================
@@ -224,7 +252,7 @@
   }
 
   function pandaTrailSpawn(state, particles) {
-    particles.push({
+    pushTrail(particles, {
       x: state.x - state.r * 0.5,
       y: state.y + (Math.random() - 0.5) * state.r * 0.4,
       vx: -40 - Math.random() * 30,
@@ -341,7 +369,7 @@
   }
 
   function shibaTrailSpawn(state, particles) {
-    particles.push({
+    pushTrail(particles, {
       x: state.x - state.r * 0.5,
       y: state.y + (Math.random() - 0.5) * state.r * 0.4,
       vx: -40 - Math.random() * 30,
@@ -480,7 +508,7 @@
   }
 
   function unicornTrailSpawn(state, particles) {
-    particles.push({
+    pushTrail(particles, {
       x: state.x - state.r * 0.5,
       y: state.y + (Math.random() - 0.5) * state.r * 0.4,
       vx: -30 - Math.random() * 30,
@@ -517,14 +545,17 @@
 
   /* ---------- 通用更新 ---------- */
   function updateTrail(particles, dt) {
-    for (let i = particles.length - 1; i >= 0; i--) {
+    // 存活指针原地压缩, 避免 splice 的数组搬移开销
+    let w = 0;
+    for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
       p.x += (p.vx || 0) * dt;
       p.y += (p.vy || 0) * dt;
       if (p.gravity) p.vy += p.gravity * dt;
       p.life -= (p.decay || 1) * dt;
-      if (p.life <= 0) particles.splice(i, 1);
+      if (p.life > 0) particles[w++] = p;
     }
+    particles.length = w;
   }
 
   /* ---------- 暴露 ---------- */

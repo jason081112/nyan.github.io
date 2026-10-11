@@ -71,6 +71,14 @@
     });
   }
 
+  function togglePause() {
+    if (NyanGame.isRunning()) {
+      NyanGame.pause();
+    } else if (NyanGame.isPaused()) {
+      NyanGame.resume();
+    }
+  }
+
   function goMenu() {
     NyanGame.pause();
     NyanUI.showMenu();

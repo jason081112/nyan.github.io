@@ -102,27 +102,64 @@
     tone({ type: 'square', freq: 480, slideTo: 720, dur: 0.08, gain: 0.25, attack: 0.003, decay: 0.03 });
   }
 
+  /* ---------- 节流: 同一音效最小间隔, 防止连击时音效扎堆 ---------- */
+  const lastPlay = {};
+  function throttled(key, minGapMs) {
+    const now = performance.now();
+    if (lastPlay[key] && now - lastPlay[key] < minGapMs) return false;
+    lastPlay[key] = now;
+    return true;
+  }
+
+  /* ---------- 延迟调度: 用 Web Audio 时间轴代替 setTimeout ----------
+     setTimeout 会占用主线程, 连击时堆积 → 卡顿。
+     这里用一个"预定时长"参数, 让振荡器自己在音频线程上延迟发声。 */
+  function toneAt(delay, opts) {
+    if (!enabled) return;
+    const c = ensureCtx();
+    if (!c) return;
+    if (c.state === 'suspended') c.resume().catch(() => {});
+    const t0 = c.currentTime + delay;   // 关键: 用音频时钟偏移, 不占主线程
+    const { type = 'sine', freq = 440, dur = 0.15, attack = 0.005, decay = 0.1, sustain = 0.6, release = 0.05, gain = 0.5, slideTo = null, detune = 0 } = opts;
+    const osc = c.createOscillator();
+    const g = c.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    osc.detune.value = detune;
+    if (slideTo !== null) osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t0 + dur);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + attack);
+    g.gain.linearRampToValueAtTime(gain * sustain, t0 + attack + decay);
+    g.gain.linearRampToValueAtTime(0, t0 + dur + release);
+    osc.connect(g);
+    g.connect(masterGain);
+    osc.start(t0);
+    osc.stop(t0 + dur + release + 0.02);
+  }
+
   function score() {
-    tone({ type: 'triangle', freq: 880, dur: 0.06, gain: 0.35 });
-    setTimeout(() => tone({ type: 'triangle', freq: 1320, dur: 0.08, gain: 0.35 }), 60);
+    if (!throttled('score', 40)) return;   // 连击时最多 25 次/秒
+    // 两个音用音频时间轴叠加, 不再用 setTimeout
+    tone({ type: 'triangle', freq: 880, dur: 0.05, gain: 0.3 });
+    toneAt(0.05, { type: 'triangle', freq: 1320, dur: 0.06, gain: 0.28 });
   }
 
   function star() {
-    tone({ type: 'sine', freq: 1200, slideTo: 1800, dur: 0.18, gain: 0.3 });
-    setTimeout(() => tone({ type: 'sine', freq: 1800, slideTo: 2400, dur: 0.15, gain: 0.25 }), 60);
+    if (!throttled('star', 60)) return;
+    tone({ type: 'sine', freq: 1200, slideTo: 1800, dur: 0.15, gain: 0.28 });
+    toneAt(0.05, { type: 'sine', freq: 1800, slideTo: 2400, dur: 0.12, gain: 0.22 });
   }
 
   function hit() {
-    noise({ dur: 0.35, gain: 0.5, filterFreq: 600 });
-    setTimeout(() => noise({ dur: 0.4, gain: 0.3, filterFreq: 200 }), 80);
-    tone({ type: 'sawtooth', freq: 220, slideTo: 60, dur: 0.4, gain: 0.4 });
+    noise({ dur: 0.3, gain: 0.45, filterFreq: 600 });
+    tone({ type: 'sawtooth', freq: 220, slideTo: 60, dur: 0.35, gain: 0.35 });
   }
 
   function combo(level) {
-    // level 越高音越高
-    const base = 880 + level * 110;
-    tone({ type: 'triangle', freq: base, dur: 0.08, gain: 0.35 });
-    setTimeout(() => tone({ type: 'triangle', freq: base * 1.5, dur: 0.1, gain: 0.3 }), 50);
+    if (!throttled('combo', 80)) return;
+    const base = 880 + Math.min(level, 10) * 110;   // 限制上限, 防止频率爆炸
+    tone({ type: 'triangle', freq: base, dur: 0.07, gain: 0.3 });
+    toneAt(0.04, { type: 'triangle', freq: base * 1.5, dur: 0.08, gain: 0.25 });
   }
 
   /* ---------- 背景音乐: 简单循环音序 ----------

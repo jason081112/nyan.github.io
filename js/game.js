@@ -33,6 +33,18 @@
   const PIPE_DRIFT_PERIOD = 5.5;// 漂移周期 (秒), 越慢越稳
   const LOWER_PIPE_MIN_VISIBLE = 90;
 
+  /* ---------- 难度曲线 (按分数 0→1, 40 分封顶) ---------- */
+  const DIFF_STEPS      = 40;    // 满难度分数
+  const SPEED_MAX       = 1.75;  // 速度倍率上限
+  const GAP_START_RATIO = 0.32;  // 起始缝宽比例
+  const GAP_MIN_RATIO   = 0.22;  // 满难度缝宽比例
+  const SPACING_START   = 340;   // 起始间距
+  const SPACING_MIN     = 250;   // 满难度间距
+  function difficulty() {
+    return Math.min(state.score / DIFF_STEPS, 1);
+  }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
   /* ---------- 事件总线 ---------- */
   const listeners = {};
   function on(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); }
@@ -113,19 +125,21 @@
     if (!state.hero.alive) return;
     state.hero.vy = JUMP_VY;
     if (window.NyanAudio && window.NyanAudio.enabled) window.NyanAudio.jump();
-    // 跳跃烟气粒子
-    for (let i = 0; i < 6; i++) {
-      state.particles.push({
-        x: state.hero.x - state.hero.r * 0.6,
-        y: state.hero.y + (Math.random() - 0.5) * state.hero.r,
-        vx: -60 - Math.random() * 60,
-        vy: -40 - Math.random() * 60,
-        r: 2 + Math.random() * 3,
-        life: 0.7,
-        decay: 0.08,
-        gravity: 200,
-        color: '#fff'
-      });
+    // 跳跃烟气粒子 - 优化：减少粒子数量
+    if (state.particles.length < 40) {  // 限制跳跃粒子数量
+      for (let i = 0; i < 4; i++) {  // 从6个减少到4个
+        pushParticle({
+          x: state.hero.x - state.hero.r * 0.6,
+          y: state.hero.y + (Math.random() - 0.5) * state.hero.r,
+          vx: -60 - Math.random() * 60,
+          vy: -40 - Math.random() * 60,
+          r: 2 + Math.random() * 3,
+          life: 0.5,  // 从0.7减少到0.5
+          decay: 0.1,  // 从0.08增加到0.1，让粒子消失更快
+          gravity: 200,
+          color: '#fff'
+        });
+      }
     }
   }
 
@@ -166,6 +180,12 @@
     state.scrollX = 0;
     state.shake = 0;
     state.flashAlpha = 0;
+    // 初始化管子生成模式 (难度驱动)
+    state.pipeMode = 'sine';
+    state.pipeWaveOffset = 0;
+    state.pipeStepCounter = 0;
+    state.pipeSpiralAngle = 0;
+    state.pipeClusterCenter = canvas.h * 0.5;
     state.phase = 'countdown';
     state.countdown = COUNTDOWN_T;
     state.countdownLabel = '3';
@@ -199,32 +219,40 @@
     if (state.phase === 'over') return;
     state.phase = 'over';
     state.hero.alive = false;
+    // 死亡后重置难度
+    state.speedMult = 1;
     if (window.NyanAudio) {
       window.NyanAudio.stopBGM();
       window.NyanAudio.hit();
     }
     state.shake = 18;
-    for (let i = 0; i < 30; i++) {
-      state.particles.push({
-        x: state.hero.x,
-        y: state.hero.y,
-        vx: (Math.random() - 0.5) * 380,
-        vy: (Math.random() - 1) * 280,
-        r: 2 + Math.random() * 5,
-        life: 1,
-        decay: 0.8,
-        gravity: 600,
-        color: ['#ff5f9e', '#ffd24c', '#5ce1ff', '#fff'][Math.floor(Math.random() * 4)]
-      });
+    // 死亡爆炸粒子效果 - 优化：减少粒子数量
+    if (state.particles.length < 80) {  // 限制死亡粒子数量
+      for (let i = 0; i < 20; i++) {  // 从30个减少到20个
+        pushParticle({
+          x: state.hero.x,
+          y: state.hero.y,
+          vx: (Math.random() - 0.5) * 380,
+          vy: (Math.random() - 1) * 280,
+          r: 2 + Math.random() * 5,
+          life: 0.8,  // 从1减少到0.8
+          decay: 1.0,  // 从0.8增加到1.0，让粒子消失更快
+          gravity: 600,
+          color: ['#ff5f9e', '#ffd24c', '#5ce1ff', '#fff'][Math.floor(Math.random() * 4)]
+        });
+      }
     }
     emit('over');
   }
 
   /* ===================================================
-   * 管道生成 (v0.3.3: 下管不能戳进地面)
+   * 管道生成 - 多模式混合系统 v1.0
    * =================================================== */
   function spawnPipe(isFirst) {
-    const gapSize = Math.max(180, canvas.h * PIPE_GAP_RATIO);
+    // 难度越高: 缝越窄 (start→min 线性插值)
+    const d = difficulty();
+    const gapRatio = lerp(GAP_START_RATIO, GAP_MIN_RATIO, d);
+    const gapSize = Math.max(150, canvas.h * gapRatio);
     const groundTop = canvas.h - state.groundH;
     const maxBotY = groundTop - LOWER_PIPE_MIN_VISIBLE;     // 下管底端最多到这里
     const minTop = MIN_TOP;                                  // 80
@@ -238,12 +266,21 @@
       const want = state.hero.y - gapSize / 2;
       gapTop = Math.max(minTop, Math.min(maxTop, want));
     } else {
-      // 后续: 在上一根 ±60px 平滑变化 (v0.4)
-      const last = state.pipes[state.pipes.length - 1];
-      const variance = (Math.random() - 0.5) * PIPE_VARIANCE;
-      const proposed = (last ? last.gapTop : state.hero.y - gapSize / 2) + variance;
-      gapTop = Math.max(minTop, Math.min(maxTop, proposed));
+      // 根据当前模式生成管子 —— 包一层防御, 任何异常都不能打断主循环
+      try {
+        gapTop = generateGapByMode(minTop, maxTop, gapSize);
+      } catch (err) {
+        console.warn('[Nyan] generateGapByMode 失败, 回落安全值:', err);
+        gapTop = (state.pipes.length ? state.pipes[state.pipes.length - 1].gapTop : canvas.h * 0.45);
+      }
     }
+
+    // 防御: 校验 gapTop 是合法有限数且落在可用区间, 否则强制回落到安全值
+    if (typeof gapTop !== 'number' || !isFinite(gapTop)) {
+      console.warn('[Nyan] gapTop 非法:', gapTop, '→ 回落安全值');
+      gapTop = Math.max(minTop, Math.min(maxTop, canvas.h * 0.45));
+    }
+    gapTop = Math.max(minTop, Math.min(maxTop, gapTop));
 
     state.pipes.push({
       x: canvas.w + 20,
@@ -252,6 +289,86 @@
       pipeW: state.pipeW,
       passed: false
     });
+
+    // 模式由难度驱动: 每根管子都按当前难度重新抽取 (区间内随机)
+    state.pipeMode = pickModeByDifficulty();
+  }
+
+  /* ===================================================
+   * 根据当前模式生成管子位置
+   * =================================================== */
+  function generateGapByMode(minTop, maxTop, gapSize) {
+    const last = state.pipes[state.pipes.length - 1];
+    const baseY = canvas.h * 0.45; // 基准高度
+    let gapTop = baseY;            // ← 修复: 严格模式下未声明赋值会抛 ReferenceError
+
+    switch (state.pipeMode) {
+      case 'sine':
+        // 正弦波模式 - 平滑周期性变化
+        state.pipeWaveOffset += 0.05;
+        const sineOffset = Math.sin(state.pipeWaveOffset) * 60;
+        gapTop = Math.max(minTop, Math.min(maxTop, (last ? last.gapTop : baseY) + sineOffset));
+        break;
+
+      case 'step':
+        // 阶梯模式 - 突然跳跃式变化
+        state.pipeStepCounter++;
+        if (state.pipeStepCounter >= 3) {
+          state.pipeStepCounter = 0;
+        }
+        const stepOffset = (state.pipeStepCounter - 1) * 40;
+        gapTop = Math.max(minTop, Math.min(maxTop, baseY + stepOffset));
+        break;
+
+      case 'random':
+        // 随机游走模式 - 大幅随机变化
+        const randomVariance = 80 + Math.random() * 40;
+        const randomOffset = (Math.random() - 0.5) * randomVariance;
+        gapTop = Math.max(minTop, Math.min(maxTop, (last ? last.gapTop : baseY) + randomOffset));
+        break;
+
+      case 'spiral':
+        // 螺旋模式 - 旋转式变化
+        state.pipeSpiralAngle += 0.1;
+        const spiralRadius = 50;
+        const spiralY = Math.sin(state.pipeSpiralAngle * 2) * spiralRadius;
+        gapTop = Math.max(minTop, Math.min(maxTop, baseY + spiralY));
+        break;
+
+      case 'cluster':
+        // 聚合模式 - 向中心点聚集
+        const clusterVariance = 30 + Math.random() * 20;
+        const clusterOffset = (Math.random() - 0.5) * clusterVariance;
+        // 缓慢移动中心点
+        state.pipeClusterCenter += (canvas.h * 0.5 - state.pipeClusterCenter) * 0.01;
+        gapTop = Math.max(minTop, Math.min(maxTop, state.pipeClusterCenter + clusterOffset));
+        break;
+
+      default:
+        // 默认使用平滑变化
+        const variance = (Math.random() - 0.5) * PIPE_VARIANCE;
+        gapTop = Math.max(minTop, Math.min(maxTop, (last ? last.gapTop : baseY) + variance));
+    }
+    
+    return gapTop;
+  }
+
+  /* ===================================================
+   * 切换到下一个模式
+   * =================================================== */
+  function pickModeByDifficulty() {
+    const d = difficulty();
+    let pool;
+    if (d < 0.25)      pool = ['sine', 'sine', 'cluster'];
+    else if (d < 0.5)  pool = ['sine', 'step', 'cluster'];
+    else if (d < 0.75) pool = ['step', 'random', 'sine'];
+    else               pool = ['random', 'spiral', 'step', 'random'];
+    const mode = pool[Math.floor(Math.random() * pool.length)];
+    // 重置对应模式状态
+    if (mode === 'sine') state.pipeWaveOffset = 0;
+    else if (mode === 'spiral') state.pipeSpiralAngle = 0;
+    else if (mode === 'cluster') state.pipeClusterCenter = canvas.h * 0.5;
+    return mode;
   }
 
   /* ===================================================
@@ -330,6 +447,8 @@
     }
 
     /* -------- 滚动 + 尾迹 -------- */
+    // 难度驱动: 速度随分数提升 (1.0 → 1.75)
+    state.speedMult = lerp(1, SPEED_MAX, difficulty());
     const speed = PIPE_SPEED * state.speedMult;
     state.scrollX += speed * dt;
     // v0.4.1 管子整体上下漂移 (±30px, 5.5s 一周期, 很慢很稳)
@@ -339,15 +458,42 @@
     if (Math.random() < 0.6) charObj.spawnTrail(state.hero, state.hero.trail);
     global.NyanChars.updateTrail(state.hero.trail, dt);
 
-    /* -------- 管道移动 + 新管道 -------- */
+    /* -------- 管道移动 + 计分 + 新管道 -------- */
+    // 计分线与碰撞检测解耦: 只要管子完全越过计分线就一定加分, 不会漏分
+    const scoreLine = state.hero.x - state.hero.r * 0.3;
     for (const p of state.pipes) {
       p.x -= speed * dt;
+
+      // 计分
+      if (!p.passed && (p.x + p.pipeW) < scoreLine) {
+        p.passed = true;
+        state.score += 1;
+        state.combo += 1;
+        if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+        if (window.NyanAudio && window.NyanAudio.enabled) window.NyanAudio.score();
+        emit('score', { score: state.score, combo: state.combo });
+        // 飞星粒子 (数量少, 走统一粒子池有硬上限)
+        for (let i = 0; i < 4; i++) {
+          pushParticle({
+            x: state.hero.x + state.hero.r,
+            y: state.hero.y,
+            vx: 60 + Math.random() * 80,
+            vy: (Math.random() - 0.5) * 120,
+            r: 2 + Math.random() * 3,
+            life: 0.45,
+            decay: 1.8,
+            gravity: 100,
+            color: '#ffd24c'
+          });
+        }
+      }
     }
     state.pipes = state.pipes.filter(p => p.x + p.pipeW > -40);
-    // 新增管道: 当屏幕右半部分没什么 pipe 时
+    // 新增管道: 间距随难度收窄
+    const spacing = lerp(SPACING_START, SPACING_MIN, difficulty());
     let needNew = true;
     for (const p of state.pipes) {
-      if (p.x > canvas.w - PIPE_SPACING) { needNew = false; break; }
+      if (p.x > canvas.w - spacing) { needNew = false; break; }
     }
     if (needNew) spawnPipe();
 
@@ -381,30 +527,6 @@
         const dyDn = hy - cyDn;
         if (dxDn * dxDn + dyDn * dyDn < heroR2) { end(); return; }
       }
-
-      // 计分
-      if (!p.passed && phRight < state.hero.x - state.hero.r * 0.3) {
-        p.passed = true;
-        state.score += 1;
-        state.combo += 1;
-        if (state.combo > state.maxCombo) state.maxCombo = state.combo;
-        if (window.NyanAudio && window.NyanAudio.enabled) window.NyanAudio.score();
-        emit('score', { score: state.score, combo: state.combo });
-        // 飞星粒子
-        for (let i = 0; i < 8; i++) {
-          state.particles.push({
-            x: state.hero.x + state.hero.r,
-            y: state.hero.y,
-            vx: 60 + Math.random() * 80,
-            vy: (Math.random() - 0.5) * 120,
-            r: 2 + Math.random() * 3,
-            life: 0.7,
-            decay: 1.2,
-            gravity: 100,
-            color: '#ffd24c'
-          });
-        }
-      }
     }
 
     updateParticles(dt);
@@ -412,15 +534,29 @@
     if (state.shake > 0) state.shake = Math.max(0, state.shake - 60 * dt);
   }
 
+  /* ===================================================
+   * 粒子池: 硬上限, 超了就丢弃最老的, 防止内存/GC 抖动
+   * =================================================== */
+  const MAX_PARTICLES = 120;
+  function pushParticle(p) {
+    if (state.particles.length >= MAX_PARTICLES) {
+      state.particles.shift();   // 丢弃最老的, 保持数组稳定大小
+    }
+    state.particles.push(p);
+  }
+
   function updateParticles(dt) {
-    for (let i = state.particles.length - 1; i >= 0; i--) {
+    // 用"存活指针"原地压缩, 避免大量 splice 造成的数组搬移
+    let w = 0;
+    for (let i = 0; i < state.particles.length; i++) {
       const p = state.particles[i];
       p.x += (p.vx || 0) * dt;
       p.y += (p.vy || 0) * dt;
       if (p.gravity) p.vy += p.gravity * dt;
       p.life -= (p.decay || 1) * dt;
-      if (p.life <= 0) state.particles.splice(i, 1);
+      if (p.life > 0) state.particles[w++] = p;
     }
+    state.particles.length = w;    // 一次性截断, 比分次 splice 快得多
   }
 
   /* ===================================================
@@ -453,15 +589,17 @@
     /* 4. Hero 本体 */
     charObj.draw(ctx, state.hero.x, state.hero.y, state.hero.r, performance.now(), state.hero.vy);
 
-    /* 5. 一次性粒子 */
-    for (const p of state.particles) {
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, p.life);
-      ctx.fillStyle = p.color || '#fff';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+    /* 5. 一次性粒子 (去掉 save/restore, 直接设 globalAlpha) */
+    if (state.particles.length) {
+      ctx.globalAlpha = 1;
+      for (const p of state.particles) {
+        ctx.globalAlpha = p.life > 1 ? 1 : (p.life < 0 ? 0 : p.life);
+        ctx.fillStyle = p.color || '#fff';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
     }
 
     /* 6. 地面 */
@@ -518,7 +656,7 @@
   function renderDebug(ctx) {
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(8, 8, 200, 120);
+    ctx.fillRect(8, 8, 220, 140);
     ctx.fillStyle = '#5ce1ff';
     ctx.font = '12px monospace';
     ctx.textBaseline = 'top';
@@ -531,6 +669,8 @@
       `vy=${state.hero.vy.toFixed(0)}`,
       `pipes: ${state.pipes.length}`,
       `scrollX: ${state.scrollX.toFixed(0)}`,
+      `mode: ${state.pipeMode}`,
+      `diff: ${difficulty().toFixed(2)}  speed: x${state.speedMult.toFixed(2)}`,
       '按 D 关闭调试'
     ];
     lines.forEach((ln, i) => ctx.fillText(ln, 16, 14 + i * 14));

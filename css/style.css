@@ -324,7 +324,7 @@ html, body {
   background: linear-gradient(180deg, rgba(0,0,0,0.45), transparent);
 }
 
-.hud-score, .hud-best {
+.hud-score, .hud-best, .hud-difficulty {
   background: rgba(0,0,0,0.5);
   padding: 6px 12px;
   border-radius: 10px;
