@@ -1,0 +1,40 @@
+# OpenCodeReview - AI PR 自动审查
+#
+# PR 打开/更新时自动用 GLM-4.7-Flash（免费）审查代码，
+# 结果以行级评论 + 汇总评论的形式发到 PR 上。
+#
+# 手动审查方法：从 main 拉个分支改点东西，开 PR 即可触发。
+#
+# 需要的 Secret：
+#   OCR_LLM_AUTH_TOKEN - 智谱 API Key
+
+name: OpenCodeReview PR Review
+
+on:
+  pull_request:
+    # ready_for_review: 草稿 PR 标记为"可供审查"时也触发
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@v1.12.13
+        with:
+          llm_url: https://open.bigmodel.cn/api/paas/v4/chat/completions
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: glm-4.7-flash
+          llm_use_anthropic: 'false'
+          language: 'Chinese'
+          # 智谱免费模型只允许 1 并发，压到 1 避免 429 限流
+          review_concurrency: '1'
