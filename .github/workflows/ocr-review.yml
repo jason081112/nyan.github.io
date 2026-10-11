@@ -12,7 +12,8 @@ name: OpenCodeReview PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # ready_for_review: 草稿 PR 标记为"可供审查"时也触发
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
